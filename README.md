@@ -24,6 +24,10 @@ to drop the full line with reset times below the notch; click to refresh. It
 follows the built-in display, and hides while the lid is closed. The ears cover a
 little menu bar next to the notch.
 
+The notch line is newer than the Touch Bar one. If it sits wrong on your Mac,
+[open an issue](https://github.com/HikvIneH/ccusagebar/issues/new/choose) with a
+screenshot and the model.
+
 ## Choosing one
 
 By default it shows whichever the Mac has: the Touch Bar line on a Touch Bar Mac,
@@ -72,6 +76,10 @@ from System Settings → General → Login Items.
 - It's an `LSUIElement` agent: no Dock icon, no menu bar.
 
 Undocumented endpoint and private APIs: no App Store, and either could break.
+
+Unofficial: not made by, endorsed by or affiliated with Anthropic. Not related to
+the [ccusage](https://github.com/ccusage/ccusage) project either; the "cc" is for
+Claude Code.
 
 ## Contributing
 
