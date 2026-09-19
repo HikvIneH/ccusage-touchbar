@@ -73,6 +73,10 @@ from System Settings → General → Login Items.
 
 Undocumented endpoint and private APIs: no App Store, and either could break.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md): how to build, what to check, commit format.
+
 ## License
 
 MIT

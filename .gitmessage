@@ -1,0 +1,8 @@
+
+# Subject: what the app now does. Capitalised, no full stop, 72 characters or fewer.
+#   Show only what the Mac has, with a mode setting to choose
+#
+# Body (optional, after a blank line, wrapped at 72): why. What was wrong, or
+# why this way and not the obvious other way. The diff already says what.
+#
+# One change per commit. Lines starting with # are dropped.
