@@ -2,7 +2,7 @@
 
 Your Claude plan limits, always on the MacBook Pro Touch Bar.
 
-![Touch Bar: esc, 5h 44% · 23:10 │ week 12% · Mon 06:00 │ Fable 15%, then the Control Strip](docs/touchbar.png)
+![Touch Bar: esc, 5h 44% · 23:10 │ week 12% · Mon 06:00 │ Fable 15%, then the Control Strip](docs/touchbar-limits.png)
 
 The same numbers Claude Code's `/usage` shows: the 5-hour session limit, the
 weekly limit, and any per-model weekly limit (Fable, today). The line takes the
