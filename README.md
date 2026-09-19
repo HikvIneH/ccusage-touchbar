@@ -24,6 +24,20 @@ to drop the full line with reset times below the notch; click to refresh. It
 follows the built-in display, and hides while the lid is closed. The ears cover a
 little menu bar next to the notch.
 
+## Choosing one
+
+By default it shows whichever the Mac has: the Touch Bar line on a Touch Bar Mac,
+the notch line on a screen with a notch, and nothing where there is neither. To
+pick one yourself:
+
+```sh
+defaults write com.hikvineh.ccusagebar mode notch      # or: touchbar
+defaults delete com.hikvineh.ccusagebar mode           # back to automatic
+```
+
+then quit and reopen `CCUsageBar`. `mode notch` on a screen without a notch puts
+the same line in the middle of the menu bar.
+
 ## Why not MTMR / BetterTouchTool?
 
 MTMR does this kind of thing, but its last release isn't notarized, so current

@@ -18,12 +18,14 @@ final class Notch: NSView {
     private let full = NSTextField(labelWithString: "")
     private let panel = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                    backing: .buffered, defer: false)
+    private let always: Bool
     private let onClick: () -> Void
     private var hovering = false
     private let text: [NSAttributedString.Key: Any] = [
         .foregroundColor: NSColor.white, .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)]
 
-    init(onClick: @escaping () -> Void) {
+    init(always: Bool, onClick: @escaping () -> Void) {
+        self.always = always
         self.onClick = onClick
         super.init(frame: .zero)
         wantsLayer = true
@@ -60,9 +62,8 @@ final class Notch: NSView {
     }
 
     @objc func place() {
-        // -fakeNotch YES draws one on a Mac without, to see it.
-        let fake = UserDefaults.standard.bool(forKey: "fakeNotch")
-        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? (fake ? NSScreen.main : nil)
+        // Without a notch there is nothing to show, unless asked to always: then mid menu bar.
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? (always ? NSScreen.main : nil)
         else { panel.orderOut(nil); return }
         // The notch is what the two menu bar areas beside it leave over.
         var notchW: CGFloat = 180, notchH = max(screen.frame.maxY - screen.visibleFrame.maxY, NSStatusBar.system.thickness)

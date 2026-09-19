@@ -13,6 +13,22 @@ let setPresence = dlsym(dfr, "DFRElementSetControlStripPresenceForIdentifier")
 let showCloseBox = dlsym(dfr, "DFRSystemModalShowsCloseBoxWhenFrontMost")
     .map { unsafeBitCast($0, to: (@convention(c) (Bool) -> Void).self) }
 
+// Which to show: "touchbar", "notch", or unset for whichever this Mac has.
+//   defaults write com.hikvineh.ccusagebar mode notch
+let mode = UserDefaults.standard.string(forKey: "mode") ?? "auto"
+// No API says whether there is a Touch Bar, but the Macs that had one are a closed list.
+let touchBarMacs: Set = ["MacBookPro13,2", "MacBookPro13,3", "MacBookPro14,2", "MacBookPro14,3",
+    "MacBookPro15,1", "MacBookPro15,2", "MacBookPro15,3", "MacBookPro15,4", "MacBookPro16,1",
+    "MacBookPro16,2", "MacBookPro16,3", "MacBookPro16,4", "MacBookPro17,1", "Mac14,7"]
+let model: String = {
+    var size = 0
+    sysctlbyname("hw.model", nil, &size, nil, 0)
+    var buf = [CChar](repeating: 0, count: size)
+    sysctlbyname("hw.model", &buf, &size, nil, 0)
+    return String(cString: buf)
+}()
+let useTouchBar = mode == "touchbar" || (mode == "auto" && touchBarMacs.contains(model))
+
 final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
     let stripButton = NSButton(title: "✦", target: nil, action: nil)
     let fullButton = NSButton(title: "loading…", target: nil, action: nil)
@@ -24,9 +40,15 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         bar.defaultItemIdentifiers = [fullID]
         return bar
     }()
-    lazy var notch = Notch { [weak self] in self?.refresh() }
+    // Asked for by name, the notch line is drawn even on a screen without a notch.
+    lazy var notch = mode == "touchbar" ? nil : Notch(always: mode == "notch") { [weak self] in self?.refresh() }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        refresh()
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
+        notch?.place()
+        guard useTouchBar else { return }
+
         stripButton.target = self; stripButton.action = #selector(show)
         fullButton.target = self; fullButton.action = #selector(refresh)
         fullButton.isBordered = false
@@ -40,9 +62,6 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         setPresence?(stripID.rawValue as NSString, true)
 
         show()
-        notch.place()
-        refresh()
-        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
         // Bring it back if an app switch or anything else took it down.
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(show),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -86,7 +105,7 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
                     .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 15)]))
                 self.fullButton.attributedTitle = title
                 self.fullWidth.constant = ceil(title.size().width) + 16
-                self.notch.update(short: lines[0], full: lines[1])
+                self.notch?.update(short: lines[0], full: lines[1])
             }
         }
     }
