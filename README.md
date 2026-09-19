@@ -2,13 +2,16 @@
 
 Your Claude plan limits, always on the MacBook Pro Touch Bar.
 
-![Touch Bar: esc, 5h 44% · 23:10 │ week 12% · Mon 06:00 │ Fable 15%, then the Control Strip](docs/touchbar-limits.png)
+![Touch Bar: ✳ 5h 45% · 23:10, week 12% · Mon 06:00, Fable 15%, then the Control Strip](docs/touchbar-spark.png)
 
 The same numbers Claude Code's `/usage` shows: the 5-hour session limit, the
 weekly limit, and any per-model weekly limit (Fable, today). The line takes the
-app area of the Touch Bar; brightness and volume stay in the Control Strip, and
-the app supplies its own `esc` key since macOS hides the system one. The system ✕
-can still close it; it comes back on the next app switch, or tap ✦ in the Control Strip.
+app area of the Touch Bar; brightness and volume stay in the Control Strip. The
+system ✕ can close it; it comes back on the next app switch, or tap ✦ in the
+Control Strip.
+
+It covers the Touch Bar's Esc, so it suits Macs with a physical Esc key (or an
+external keyboard).
 
 ## Why not MTMR / BetterTouchTool?
 
@@ -24,9 +27,6 @@ with a Claude subscription:
 ```sh
 ./install.sh      # builds, copies to ~/Applications, adds a login item
 ```
-
-Allow **CCUsageBar** in System Settings → Privacy & Security → Accessibility so
-the `esc` key works. Ad-hoc signing means a rebuild may need that toggled again.
 
 Uninstall: quit `CCUsageBar`, delete `~/Applications/CCUsageBar.app`, and remove it
 from System Settings → General → Login Items.

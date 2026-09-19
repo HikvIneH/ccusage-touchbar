@@ -1,11 +1,9 @@
-// Claude plan limits across the Touch Bar, always shown, with our own Esc key
-// (the system one is hidden while a system-modal Touch Bar is up).
+// Claude plan limits across the Touch Bar, always shown.
 // Uses the same private DFRFoundation/NSTouchBar calls MTMR and Pock rely on.
 import AppKit
 
 let script = Bundle.main.path(forResource: "ccusage-line", ofType: "sh")!
 let stripID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.strip")
-let escID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.esc")
 let fullID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.full")
 
 let dfr = dlopen("/System/Library/PrivateFrameworks/DFRFoundation.framework/DFRFoundation", RTLD_NOW)
@@ -16,26 +14,22 @@ let showCloseBox = unsafeBitCast(dlsym(dfr, "DFRSystemModalShowsCloseBoxWhenFron
 
 final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
     let stripButton = NSButton(title: "✦", target: nil, action: nil)
-    let escButton = NSButton(title: "esc", target: nil, action: nil)
     let fullButton = NSButton(title: "loading…", target: nil, action: nil)
+    // The Touch Bar sizes an item once, so the width tracks the text explicitly.
+    lazy var fullWidth = fullButton.widthAnchor.constraint(equalToConstant: 120)
     lazy var modal: NSTouchBar = {
         let bar = NSTouchBar()
         bar.delegate = self
-        bar.defaultItemIdentifiers = [escID, fullID]
+        bar.defaultItemIdentifiers = [fullID]
         return bar
     }()
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        // Posting Esc needs Accessibility; this asks once.
-        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-
         stripButton.target = self; stripButton.action = #selector(show)
-        escButton.target = self; escButton.action = #selector(escape)
         fullButton.target = self; fullButton.action = #selector(refresh)
         fullButton.isBordered = false
         (fullButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
-        fullButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        escButton.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        fullWidth.isActive = true
 
         let item = NSCustomTouchBarItem(identifier: stripID)
         item.view = stripButton
@@ -51,9 +45,9 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
     }
 
     func touchBar(_ bar: NSTouchBar, makeItemForIdentifier id: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
-        guard id == escID || id == fullID else { return nil }
+        guard id == fullID else { return nil }
         let item = NSCustomTouchBarItem(identifier: id)
-        item.view = id == escID ? escButton : fullButton
+        item.view = fullButton
         return item
     }
 
@@ -64,13 +58,6 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         typealias Present = @convention(c) (AnyClass, Selector, NSTouchBar, Int, NSString) -> Void
         unsafeBitCast(imp, to: Present.self)(NSTouchBar.self, sel, modal, 0, stripID.rawValue as NSString)
         showCloseBox(false)
-    }
-
-    @objc func escape() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        for down in [true, false] {
-            CGEvent(keyboardEventSource: src, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap)
-        }
     }
 
     @objc func refresh() {
@@ -85,7 +72,16 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
             let lines = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 .split(separator: "\n").map(String.init)
             guard lines.count >= 2 else { return }
-            DispatchQueue.main.async { self.fullButton.title = lines[1] }
+            DispatchQueue.main.async {
+                // A Claude-coloured spark in front; a Unicode glyph, not Anthropic's logo file.
+                let title = NSMutableAttributedString(string: "✳︎  ", attributes: [
+                    .foregroundColor: NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1),
+                    .font: NSFont.systemFont(ofSize: 17, weight: .bold)])
+                title.append(NSAttributedString(string: lines[1], attributes: [
+                    .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 15)]))
+                self.fullButton.attributedTitle = title
+                self.fullWidth.constant = ceil(title.size().width) + 16
+            }
         }
     }
 }
