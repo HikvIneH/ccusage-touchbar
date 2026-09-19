@@ -4,7 +4,7 @@ set -e
 cd "${0:A:h}"
 APP=CCUsageBar.app
 rm -rf $APP && mkdir -p $APP/Contents/MacOS $APP/Contents/Resources
-swiftc -O main.swift -o $APP/Contents/MacOS/CCUsageBar
+swiftc -O main.swift notch.swift -o $APP/Contents/MacOS/CCUsageBar
 cp ccusage-line.sh $APP/Contents/Resources/
 cat > $APP/Contents/Info.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
