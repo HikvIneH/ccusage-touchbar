@@ -1,60 +1,79 @@
-// ccusage in the Touch Bar's Control Strip. Tap for the full line, tap again to hide.
+// Claude plan limits across the Touch Bar, always shown, with our own Esc key
+// (the system one is hidden while a system-modal Touch Bar is up).
 // Uses the same private DFRFoundation/NSTouchBar calls MTMR and Pock rely on.
 import AppKit
 
 let script = Bundle.main.path(forResource: "ccusage-line", ofType: "sh")!
 let stripID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.strip")
+let escID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.esc")
 let fullID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.full")
 
-typealias PresenceFn = @convention(c) (NSString, Bool) -> Void
 let dfr = dlopen("/System/Library/PrivateFrameworks/DFRFoundation.framework/DFRFoundation", RTLD_NOW)
-let setPresence = unsafeBitCast(dlsym(dfr, "DFRElementSetControlStripPresenceForIdentifier"), to: PresenceFn.self)
+let setPresence = unsafeBitCast(dlsym(dfr, "DFRElementSetControlStripPresenceForIdentifier"),
+                                to: (@convention(c) (NSString, Bool) -> Void).self)
+let showCloseBox = unsafeBitCast(dlsym(dfr, "DFRSystemModalShowsCloseBoxWhenFrontMost"),
+                                 to: (@convention(c) (Bool) -> Void).self)
 
 final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
-    let stripButton = NSButton(title: "✦ …", target: nil, action: nil)
-    let fullButton = NSButton(title: "✦ loading…", target: nil, action: nil)
+    let stripButton = NSButton(title: "✦", target: nil, action: nil)
+    let escButton = NSButton(title: "esc", target: nil, action: nil)
+    let fullButton = NSButton(title: "loading…", target: nil, action: nil)
     lazy var modal: NSTouchBar = {
         let bar = NSTouchBar()
         bar.delegate = self
-        bar.defaultItemIdentifiers = [fullID]
+        bar.defaultItemIdentifiers = [escID, fullID]
         return bar
     }()
-    var showingFull = false
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        stripButton.target = self; stripButton.action = #selector(toggle)
-        fullButton.target = self; fullButton.action = #selector(toggle)
+        // Posting Esc needs Accessibility; this asks once.
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+
+        stripButton.target = self; stripButton.action = #selector(show)
+        escButton.target = self; escButton.action = #selector(escape)
+        fullButton.target = self; fullButton.action = #selector(refresh)
         fullButton.isBordered = false
-        stripButton.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        stripButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
+        (fullButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
+        fullButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        escButton.widthAnchor.constraint(equalToConstant: 64).isActive = true
 
         let item = NSCustomTouchBarItem(identifier: stripID)
         item.view = stripButton
         NSTouchBarItem.perform(NSSelectorFromString("addSystemTrayItem:"), with: item)
         setPresence(stripID.rawValue as NSString, true)
 
+        show()
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
+        // Bring it back if an app switch or anything else took it down.
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(show),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
     }
 
     func touchBar(_ bar: NSTouchBar, makeItemForIdentifier id: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
+        guard id == escID || id == fullID else { return nil }
         let item = NSCustomTouchBarItem(identifier: id)
-        item.view = fullButton
+        item.view = id == escID ? escButton : fullButton
         return item
     }
 
-    @objc func toggle() {
-        showingFull.toggle()
-        if showingFull {
-            NSTouchBar.perform(NSSelectorFromString("presentSystemModalTouchBar:systemTrayItemIdentifier:"),
-                               with: modal, with: stripID.rawValue)
-        } else {
-            NSTouchBar.perform(NSSelectorFromString("minimizeSystemModalTouchBar:"), with: modal)
-        }
-        refresh()
+    @objc func show() {
+        // placement 0 keeps the Control Strip (brightness, volume); perform(_:with:with:) can't pass the Int.
+        let sel = NSSelectorFromString("presentSystemModalTouchBar:placement:systemTrayItemIdentifier:")
+        let imp = method_getImplementation(class_getClassMethod(NSTouchBar.self, sel)!)
+        typealias Present = @convention(c) (AnyClass, Selector, NSTouchBar, Int, NSString) -> Void
+        unsafeBitCast(imp, to: Present.self)(NSTouchBar.self, sel, modal, 0, stripID.rawValue as NSString)
+        showCloseBox(false)
     }
 
-    func refresh() {
+    @objc func escape() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for down in [true, false] {
+            CGEvent(keyboardEventSource: src, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap)
+        }
+    }
+
+    @objc func refresh() {
         DispatchQueue.global().async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: script)
@@ -62,15 +81,11 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
             p.standardOutput = pipe
             try? p.run()
             p.waitUntilExit()
-            let line = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { return }
-            // "✦ $127 today · $51 block · 2h14m" -> "✦$127" in the strip
-            let short = line.components(separatedBy: " today").first?.replacingOccurrences(of: " ", with: "") ?? line
-            DispatchQueue.main.async {
-                self.stripButton.title = short
-                self.fullButton.title = line
-            }
+            // Line 2 is the full line; line 1 (the short label) is unused while always expanded.
+            let lines = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .split(separator: "\n").map(String.init)
+            guard lines.count >= 2 else { return }
+            DispatchQueue.main.async { self.fullButton.title = lines[1] }
         }
     }
 }
