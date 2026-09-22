@@ -10,9 +10,11 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 cache=~/Library/Caches/ccusagebar.json
 if [[ ! -e $cache || -n $(find $cache -mmin +5) ]]; then
   tok=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null |
-    node -e 'try { console.log(JSON.parse(require("fs").readFileSync(0, "utf8")).claudeAiOauth.accessToken) } catch {}')
-  fresh=$(curl -sf -m 10 https://api.anthropic.com/api/oauth/usage \
-    -H "Authorization: Bearer $tok" -H "anthropic-beta: oauth-2025-04-20")
+    node -e 'try { console.log(JSON.parse(require("fs").readFileSync(0, "utf8")).claudeAiOauth.accessToken ?? "") } catch {}')
+  # The token goes in on stdin (-H @-): as an argument, ps would show it to any process.
+  # No token (signed out, or the Keychain said no): nothing to send, so show stale.
+  [[ -n $tok ]] && fresh=$(print -r -- "Authorization: Bearer $tok" | curl -sf -m 10 -H @- \
+    -H "anthropic-beta: oauth-2025-04-20" https://api.anthropic.com/api/oauth/usage)
   if [[ -n $fresh ]]; then print -r -- $fresh > $cache; else stale=1; touch $cache 2>/dev/null; fi
 fi
 STALE=$stale node -e '
