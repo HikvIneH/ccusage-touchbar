@@ -1,13 +1,9 @@
 // Claude plan limits around the notch, for MacBooks that have one instead of a Touch Bar.
 // The notch itself has no pixels, so the short label sits in black "ears" on either side
-// of it; hovering drops the full line below, a click refreshes.
+// of it; hovering drops the full line below, a click grows it into the details (details.swift).
 import AppKit
 
-extension NSColor {
-    static let claude = NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-}
-
-private final class NotchPanel: NSPanel {
+final class TopPanel: NSPanel {
     // AppKit would otherwise push the window down out of the menu bar.
     override func constrainFrameRect(_ r: NSRect, to s: NSScreen?) -> NSRect { r }
 }
@@ -16,13 +12,17 @@ final class Notch: NSView {
     private let left = NSTextField(labelWithString: "")
     private let right = NSTextField(labelWithString: "")
     private let full = NSTextField(labelWithString: "")
-    private let panel = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                                   backing: .buffered, defer: false)
+    private let panel = TopPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                 backing: .buffered, defer: false)
     private let always: Bool
     private let onClick: () -> Void
     private var hovering = false
-    private let text: [NSAttributedString.Key: Any] = [
-        .foregroundColor: NSColor.white, .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)]
+    private var usage: Usage?
+    private var waiting = 0
+    private let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    // While the details hang below, the ears are their top edge: square bottom, no hover line.
+    var expanded = false { didSet { place() } }
+    var frameOnScreen: NSRect? { panel.isVisible ? panel.frame : nil }
 
     init(always: Bool, onClick: @escaping () -> Void) {
         self.always = always
@@ -31,7 +31,6 @@ final class Notch: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.cornerRadius = 10
-        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner] // the bottom two
         [left, right, full].forEach(addSubview)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self))
@@ -44,19 +43,34 @@ final class Notch: NSView {
         // The notch screen comes and goes with the lid and external displays.
         NotificationCenter.default.addObserver(self, selector: #selector(place),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
-        update(short: "…", full: "loading…")
+        render()
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // short is "5h 41% · wk 11% · F 14%": the session goes left of the notch, the rest right.
-    func update(short: String, full line: String) {
-        let parts = short.components(separatedBy: " · ")
+    func update(usage: Usage) { self.usage = usage; render() }
+    // Sessions waiting on a permission prompt or a question, counted in the right ear.
+    func update(waiting: Int) { if waiting != self.waiting { self.waiting = waiting; render() } }
+
+    // The session limit goes left of the notch, the rest right, each in its level's colour.
+    private func render() {
+        let line = usage?.line ?? []
+        let stale = usage?.stale ?? false
         let l = NSMutableAttributedString(string: "✳︎ ", attributes: [
             .foregroundColor: NSColor.claude, .font: NSFont.systemFont(ofSize: 13, weight: .bold)])
-        l.append(NSAttributedString(string: parts[0], attributes: text))
+        l.append(colored(line.prefix(1).map { ($0.short, $0.level) }, sep: "", stale: false, font: font))
+        if line.isEmpty { l.append(NSAttributedString(string: usage == nil ? "…" : "?", attributes: [.foregroundColor: NSColor.white, .font: font])) }
         left.attributedStringValue = l
-        right.attributedStringValue = NSAttributedString(string: parts.dropFirst().joined(separator: " · "), attributes: text)
-        full.attributedStringValue = NSAttributedString(string: line, attributes: text)
+        let r = NSMutableAttributedString(attributedString:
+            colored(line.dropFirst().map { ($0.short, $0.level) }, sep: " · ", stale: stale, font: font))
+        if waiting > 0 {
+            r.append(NSAttributedString(string: "  ● \(waiting)", attributes: [.foregroundColor: NSColor.systemOrange, .font: font]))
+        }
+        right.attributedStringValue = r
+        full.attributedStringValue = usage.map { u in
+            u.rows.isEmpty ? NSAttributedString(string: "Limits unavailable — retrying in a few minutes",
+                                                attributes: [.foregroundColor: NSColor.white, .font: font])
+                : colored(u.line.map { ($0.long, $0.level) }, sep: "  │  ", stale: u.stale, font: font)
+        } ?? NSAttributedString(string: "loading…", attributes: [.foregroundColor: NSColor.white, .font: font])
         [left, right, full].forEach { $0.sizeToFit() }
         place()
     }
@@ -72,19 +86,21 @@ final class Notch: NSView {
             notchH = screen.safeAreaInsets.top
         }
         let pad: CGFloat = 10, drop: CGFloat = 26, cx = screen.frame.midX
+        let dropping = hovering && !expanded
         var minX = cx - notchW / 2 - left.frame.width - 2 * pad
         var maxX = cx + notchW / 2 + right.frame.width + 2 * pad
         var h = notchH
-        if hovering {
+        if dropping {
             minX = min(minX, cx - full.frame.width / 2 - pad)
             maxX = max(maxX, cx + full.frame.width / 2 + pad)
             h += drop
         }
+        layer?.maskedCorners = expanded ? [] : [.layerMinXMinYCorner, .layerMaxXMinYCorner] // the bottom two
         let earY = h - notchH + (notchH - left.frame.height) / 2
         left.setFrameOrigin(NSPoint(x: cx - notchW / 2 - pad - left.frame.width - minX, y: earY))
         right.setFrameOrigin(NSPoint(x: cx + notchW / 2 + pad - minX, y: earY))
         full.setFrameOrigin(NSPoint(x: cx - full.frame.width / 2 - minX, y: (drop - full.frame.height) / 2 + 2))
-        full.isHidden = !hovering
+        full.isHidden = !dropping
         panel.setFrame(NSRect(x: minX, y: screen.frame.maxY - h, width: maxX - minX, height: h), display: true)
         panel.orderFrontRegardless()
     }

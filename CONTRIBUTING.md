@@ -1,6 +1,6 @@
 # Contributing
 
-Small project, small rules. It is one Swift app (`main.swift`, `notch.swift`) and
+Small project, small rules. It is one Swift app (`main.swift` and the few files beside it) and
 one shell script (`ccusage-line.sh`), with no dependencies beyond what the README
 lists. Changes that keep it that way are the easiest to merge.
 
@@ -29,10 +29,13 @@ with the cache deleted.
 There is no test suite: what matters is what appears on the hardware. Before
 opening a pull request, check what your change touches:
 
-- Touch Bar: the line shows, survives an app switch, a tap refreshes it, and
+- Touch Bar: the line shows, survives an app switch, a tap opens the details, and
   brightness and volume are still in the Control Strip.
 - Notch: the label sits either side of the notch, hovering drops the full line,
-  a click refreshes, and it hides when the built-in display is off.
+  a click opens the details (↻ refreshes, a click elsewhere closes), and it hides
+  when the built-in display is off.
+- Colours: amber at 75%, red at 90%; to see them without burning usage, edit the
+  numbers in `~/Library/Caches/ccusagebar.json` (it is refetched after 5 minutes).
 - `mode` unset shows only what the Mac has; `touchbar` and `notch` override it.
 - A failed fetch shows the last numbers marked `(stale)`, not an empty line.
 
