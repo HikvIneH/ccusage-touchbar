@@ -1,6 +1,11 @@
 // Claude plan limits across the Touch Bar, always shown; around the notch on Macs that have one (notch.swift).
+// A tap or click opens the details (details.swift); crossing a threshold notifies (alerts.swift);
+// Claude Code prompts arrive through bridge.swift and are answered in the details (prompt.swift).
 // Uses the same private DFRFoundation/NSTouchBar calls MTMR and Pock rely on.
 import AppKit
+
+// Run by Claude Code's PermissionRequest hook: relay to the running app and exit (bridge.swift).
+if CommandLine.arguments.dropFirst().first == "--hook" { runHook() }
 
 let script = Bundle.main.path(forResource: "ccusage-line", ofType: "sh")!
 let stripID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.strip")
@@ -41,16 +46,27 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         return bar
     }()
     // Asked for by name, the notch line is drawn even on a screen without a notch.
-    lazy var notch = mode == "touchbar" ? nil : Notch(always: mode == "notch") { [weak self] in self?.refresh() }
+    lazy var notch = mode == "touchbar" ? nil : Notch(always: mode == "notch") { [weak self] in self?.toggleDetails() }
+    lazy var details = Details(onRefresh: { [weak self] in self?.refresh() },
+                               onHide: { [weak self] in self?.notch?.expanded = false },
+                               onAnswer: { [weak self] r, d in self?.bridge.answer(r, d) })
+    let alerts = Alerts()
+    let bridge = Bridge()
+    var sessions: [Session] = []
 
     func applicationDidFinishLaunching(_ n: Notification) {
         refresh()
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
+        // Sessions are local files, so they can be read far more often than the usage API.
+        pollSessions()
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.pollSessions() }
         notch?.place()
+        bridge.onChange = { [weak self] in self?.requestsChanged() }
+        bridge.start()
         guard useTouchBar else { return }
 
         stripButton.target = self; stripButton.action = #selector(show)
-        fullButton.target = self; fullButton.action = #selector(refresh)
+        fullButton.target = self; fullButton.action = #selector(toggleDetails)
         fullButton.isBordered = false
         (fullButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         fullWidth.isActive = true
@@ -92,22 +108,54 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
             p.standardOutput = pipe
             try? p.run()
             p.waitUntilExit()
-            // Line 1 is the short label (the notch's ears); line 2 is the full line.
+            // Lines 1 and 2 are for people running the script; line 3 is the JSON to draw from.
             let lines = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 .split(separator: "\n").map(String.init)
-            guard lines.count >= 2 else { return }
+            guard lines.count >= 3, let usage = try? JSONDecoder().decode(Usage.self, from: Data(lines[2].utf8))
+            else { return }
             DispatchQueue.main.async {
                 // A Claude-coloured spark in front; a Unicode glyph, not Anthropic's logo file.
                 let title = NSMutableAttributedString(string: "✳︎  ", attributes: [
                     .foregroundColor: NSColor.claude,
                     .font: NSFont.systemFont(ofSize: 17, weight: .bold)])
-                title.append(NSAttributedString(string: lines[1], attributes: [
-                    .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 15)]))
+                let font = NSFont.systemFont(ofSize: 15)
+                title.append(usage.rows.isEmpty
+                    ? NSAttributedString(string: lines[1], attributes: [.foregroundColor: NSColor.white, .font: font])
+                    : colored(usage.line.map { ($0.long, $0.level) }, sep: "  │  ", stale: usage.stale, font: font))
                 self.fullButton.attributedTitle = title
                 self.fullWidth.constant = ceil(title.size().width) + 16
-                self.notch?.update(short: lines[0], full: lines[1])
+                self.notch?.update(usage: usage)
+                self.details.update(usage: usage)
+                self.alerts.check(usage)
             }
         }
+    }
+
+    func pollSessions() {
+        sessions = claudeSessions()
+        notch?.update(sessions: sessions, asking: bridge.pending.count)
+        details.update(sessions: sessions)
+    }
+
+    // A new prompt opens the details on it, with a sound; answering the last one puts them away.
+    private var shownRequests = 0
+    func requestsChanged() {
+        let count = bridge.pending.count
+        notch?.update(sessions: sessions, asking: count)
+        details.update(requests: bridge.pending)
+        if count > shownRequests {
+            NSSound(named: "Tink")?.play()
+            if !details.isShown { toggleDetails() }
+        } else if count == 0, details.isShown {
+            toggleDetails()
+        }
+        shownRequests = count
+    }
+
+    // Grows out of the notch when there is one showing; otherwise hangs from the menu bar.
+    @objc func toggleDetails() {
+        details.toggle(below: notch?.frameOnScreen)
+        notch?.expanded = details.isShown
     }
 }
 
