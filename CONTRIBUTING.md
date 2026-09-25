@@ -36,6 +36,10 @@ opening a pull request, check what your change touches:
   when the built-in display is off.
 - Colours: amber at 75%, red at 90%; to see them without burning usage, edit the
   numbers in `~/Library/Caches/ccusagebar.json` (it is refetched after 5 minutes).
+- Prompts: without touching your settings, pipe a hook input into the app and
+  answer in the notch; the answer is printed:
+  `echo '{"session_id":"x","tool_name":"Bash","tool_input":{"command":"ls"}}' | ./CCUsageBar.app/Contents/MacOS/CCUsageBar --hook`
+  Killing that command takes the card away; with the app quit it prints nothing.
 - `mode` unset shows only what the Mac has; `touchbar` and `notch` override it.
 - A failed fetch shows the last numbers marked `(stale)`, not an empty line.
 

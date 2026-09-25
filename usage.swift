@@ -41,10 +41,32 @@ func until(_ t: Double) -> String {
 // Claude Code keeps one file per running process in ~/.claude/sessions, status included.
 // Not a documented format: anything missing just drops that session from the list.
 struct Session {
-    let name, status, detail: String
-    let updated: Double
+    let id, name, status, detail: String
+    let pid: pid_t
+    let updated, since: Double // ms; since: when it went busy, waiting or idle
     var waiting: Bool { status == "waiting" }
     var busy: Bool { status == "busy" }
+    // "27m", "1h 5m": how long it has been in its status.
+    var elapsed: String {
+        let m = max(0, Int(Date().timeIntervalSince1970 - since / 1000) / 60)
+        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
+    }
+}
+
+// Brings the session's terminal or editor to the front: the nearest ancestor that is a regular
+// app (Warp, iTerm2, Terminal, VS Code…). Background sessions lead to the one hosting them.
+func jump(to pid: pid_t) {
+    var p = pid
+    while p > 1 {
+        if let app = NSRunningApplication(processIdentifier: p), app.activationPolicy == .regular {
+            app.activate()
+            return
+        }
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, p]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return }
+        p = info.kp_eproc.e_ppid
+    }
 }
 
 func claudeSessions() -> [Session] {
@@ -57,8 +79,10 @@ func claudeSessions() -> [Session] {
               kill(pid, 0) == 0 || errno == EPERM // a crashed session leaves its file behind
         else { return nil }
         let place = ((s["cwd"] as? String) ?? "").split(separator: "/").last.map(String.init) ?? ""
-        return Session(name: s["name"] as? String ?? place, status: s["status"] as? String ?? "idle",
-                       detail: s["waitingFor"] as? String ?? place, updated: s["updatedAt"] as? Double ?? 0)
+        let updated = s["updatedAt"] as? Double ?? 0
+        return Session(id: s["sessionId"] as? String ?? "", name: s["name"] as? String ?? place,
+                       status: s["status"] as? String ?? "idle", detail: s["waitingFor"] as? String ?? place,
+                       pid: pid, updated: updated, since: s["statusUpdatedAt"] as? Double ?? updated)
     }
     // The ones that need you first, then the ones working, newest first.
     let rank = { (s: Session) in s.waiting ? 0 : s.busy ? 1 : 2 }

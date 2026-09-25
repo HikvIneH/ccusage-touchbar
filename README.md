@@ -28,6 +28,34 @@ credits, and the Claude Code sessions running on this Mac, the ones waiting on
 you (a permission prompt, a question) first. ↻ refreshes; a click anywhere else
 puts it away.
 
+## Sessions
+
+With a Claude Code session working, the notch's left ear shows it: its name and how
+long it has been at it, behind a ✳ that breathes while Claude works and turns
+orange when the session waits on you. The limits move to the right ear. In the
+details, click a session to bring its terminal forward (Warp, iTerm2, Terminal,
+VS Code: whichever app it runs under).
+
+## Answering from the notch
+
+```sh
+./install-hook.sh           # after ./install.sh; ./install-hook.sh remove to undo
+```
+
+![Notch panel asking to allow a Bash command, with Terminal, Deny and Allow](docs/prompt.png)
+
+adds a `PermissionRequest` hook to `~/.claude/settings.json` (the old file is kept
+as `settings.json.bak-ccusagebar`). Then, when a session needs you, the notch opens
+on it, with a sound:
+
+- a tool to allow: the command, the edit as a diff, the URL; **Allow** or **Deny**
+- a question (`AskUserQuestion`): click an option, tick several, or type your own
+- a plan (`ExitPlanMode`): rendered; **Approve**, or **Keep planning** with what to change
+
+**Terminal** hands it back to the terminal and brings that forward. While the app
+is not running the hook prints nothing and Claude Code asks in the terminal as
+before; a prompt left for an hour goes back to the terminal too.
+
 ## Alerts
 
 A notification when a limit reaches 80% and again at 95%, once per window, and
@@ -103,7 +131,12 @@ from System Settings → General → Login Items.
 - `details.swift` is the panel that drops below it; `alerts.swift` posts through
   `UNUserNotificationCenter`.
 - `usage.swift` reads the Claude Code sessions from `~/.claude/sessions`, one file
-  per running `claude`, every 10 seconds. Local files, no network.
+  per running `claude`, every 3 seconds. Local files, no network.
+- `bridge.swift`: the hook runs the app's own binary as `CCUsageBar --hook`, which
+  passes the request over a Unix socket (`~/Library/Caches/ccusagebar.sock`, this
+  user only) to the running app and prints its answer. Esc in the session kills the
+  hook, which closes the socket, which takes the card away. `prompt.swift` draws
+  the cards.
 - It's an `LSUIElement` agent: no Dock icon, no menu bar.
 
 Undocumented endpoint, private APIs and Claude Code's internal session files: no

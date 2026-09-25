@@ -15,21 +15,34 @@ private final class Bar: NSView {
     }
 }
 
+// A row that does something when clicked: a session row jumps to its terminal.
+final class Clickable: NSStackView {
+    var onClick: (() -> Void)?
+    override func mouseDown(with e: NSEvent) { onClick.map { $0() } ?? super.mouseDown(with: e) }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { if onClick != nil { addCursorRect(bounds, cursor: .pointingHand) } }
+}
+
 final class Details: NSView {
     private let panel = TopPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                  backing: .buffered, defer: false)
     private let stack = NSStackView()
     private let onRefresh: () -> Void
     private let onHide: () -> Void
+    private let onAnswer: (Request, [String: Any]?) -> Void
     private var usage: Usage?
     private var sessions: [Session] = []
+    private var requests: [Request] = []
+    private var cards: [UUID: NSView] = [:]
     private var anchor: NSRect?
     private var outside: Any?
     private(set) var isShown = false
 
-    init(onRefresh: @escaping () -> Void, onHide: @escaping () -> Void) {
+    init(onRefresh: @escaping () -> Void, onHide: @escaping () -> Void,
+         onAnswer: @escaping (Request, [String: Any]?) -> Void) {
         self.onRefresh = onRefresh
         self.onHide = onHide
+        self.onAnswer = onAnswer
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
@@ -55,6 +68,11 @@ final class Details: NSView {
 
     func update(usage: Usage) { self.usage = usage; if isShown { render() } }
     func update(sessions: [Session]) { self.sessions = sessions; if isShown { render() } }
+    func update(requests: [Request]) {
+        self.requests = requests
+        cards = cards.filter { id, _ in requests.contains { $0.id == id } }
+        if isShown { render() }
+    }
 
     // below: the notch's ears, to grow out of; nil hangs it from the menu bar of the main screen.
     func toggle(below: NSRect? = nil) { isShown ? hide() : show(below: below) }
@@ -87,8 +105,8 @@ final class Details: NSView {
         return l
     }
 
-    private func row(_ left: NSView, _ right: NSView) -> NSStackView {
-        let r = NSStackView(views: [left, NSView(), right])
+    private func row(_ left: NSView, _ right: NSView) -> Clickable {
+        let r = Clickable(views: [left, NSView(), right])
         r.distribution = .fill
         right.setContentCompressionResistancePriority(.required, for: .horizontal)
         return r
@@ -96,11 +114,27 @@ final class Details: NSView {
 
     private func render() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let width: CGFloat = max(340, anchor?.width ?? 0)
+        let width: CGFloat = max(requests.isEmpty ? 340 : 440, anchor?.width ?? 0)
         func add(_ v: NSView, gap: CGFloat? = nil) {
             stack.addArrangedSubview(v)
             v.widthAnchor.constraint(equalToConstant: width - 32).isActive = true
             if let gap { stack.setCustomSpacing(gap, after: stack.arrangedSubviews[stack.arrangedSubviews.count - 2]) }
+        }
+
+        // A request waiting on you takes the panel; the limits come back once it is answered.
+        if let r = requests.first {
+            let session = sessions.first { $0.id == r.sessionID }
+            if requests.count > 1 { add(label("1 of \(requests.count) waiting", .dim, size: 11)) }
+            let card = cards[r.id] ?? requestCard(r, session: session?.name ?? "Claude", width: width - 32) { [weak self] d in
+                self?.onAnswer(r, d)
+                if d == nil, let pid = session?.pid { jump(to: pid) } // "Terminal": answer it there
+            }
+            cards[r.id] = card
+            stack.addArrangedSubview(card)
+            renderSessions(add)
+            layoutSubtreeIfNeeded()
+            place(width: width, height: stack.fittingSize.height)
+            return
         }
 
         let head = NSMutableAttributedString(string: "✳︎  ", attributes: [
@@ -130,12 +164,19 @@ final class Details: NSView {
             add(label(r.sub + (r.resetsAt.map { " · " + until($0) } ?? ""), .dim, size: 11))
         }
         if usage?.rows.isEmpty == true { add(label("Limits unavailable — retrying in a few minutes", .dim)) }
+        renderSessions(add)
 
+        layoutSubtreeIfNeeded()
+        place(width: width, height: stack.fittingSize.height)
+    }
+
+    // Click one to go to its terminal.
+    private func renderSessions(_ addGap: (NSView, CGFloat?) -> Void) {
+        func add(_ v: NSView) { addGap(v, nil) }
         let waiting = sessions.filter(\.waiting).count, busy = sessions.filter(\.busy).count
         let summary = [busy > 0 ? "\(busy) working" : nil, waiting > 0 ? "\(waiting) waiting" : nil,
                        "\(sessions.count - busy - waiting) idle"].compactMap { $0 }.joined(separator: " · ")
-        add(row(label("Claude Code", weight: .semibold), label(sessions.isEmpty ? "none running" : summary, .dim, size: 11)),
-            gap: 14)
+        addGap(row(label("Claude Code", weight: .semibold), label(sessions.isEmpty ? "none running" : summary, .dim, size: 11)), 14)
         // Idle ones are only counted: the list is for what is moving or stuck.
         let active = sessions.filter { $0.waiting || $0.busy }
         for s in active.prefix(6) {
@@ -143,12 +184,12 @@ final class Details: NSView {
             dot.setContentCompressionResistancePriority(.required, for: .horizontal)
             let name = NSStackView(views: [dot, label(s.name)])
             name.spacing = 6
-            add(row(name, label(s.waiting ? "waiting: \(s.detail)" : s.detail, s.waiting ? .systemOrange : .dim, size: 11)))
+            let what = s.waiting ? "waiting: \(s.detail)" : "\(s.detail) · \(s.elapsed)"
+            let r = row(name, label(what, s.waiting ? .systemOrange : .dim, size: 11))
+            r.onClick = { [weak self] in self?.hide(); jump(to: s.pid) }
+            add(r)
         }
         if active.count > 6 { add(label("and \(active.count - 6) more", .dim, size: 11)) }
-
-        layoutSubtreeIfNeeded()
-        place(width: width, height: stack.fittingSize.height)
     }
 
     private func place(width: CGFloat, height: CGFloat) {

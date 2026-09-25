@@ -1,7 +1,11 @@
 // Claude plan limits across the Touch Bar, always shown; around the notch on Macs that have one (notch.swift).
-// A tap or click opens the details (details.swift); crossing a threshold notifies (alerts.swift).
+// A tap or click opens the details (details.swift); crossing a threshold notifies (alerts.swift);
+// Claude Code prompts arrive through bridge.swift and are answered in the details (prompt.swift).
 // Uses the same private DFRFoundation/NSTouchBar calls MTMR and Pock rely on.
 import AppKit
+
+// Run by Claude Code's PermissionRequest hook: relay to the running app and exit (bridge.swift).
+if CommandLine.arguments.dropFirst().first == "--hook" { runHook() }
 
 let script = Bundle.main.path(forResource: "ccusage-line", ofType: "sh")!
 let stripID = NSTouchBarItem.Identifier("com.hikvineh.ccusagebar.strip")
@@ -44,16 +48,21 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
     // Asked for by name, the notch line is drawn even on a screen without a notch.
     lazy var notch = mode == "touchbar" ? nil : Notch(always: mode == "notch") { [weak self] in self?.toggleDetails() }
     lazy var details = Details(onRefresh: { [weak self] in self?.refresh() },
-                               onHide: { [weak self] in self?.notch?.expanded = false })
+                               onHide: { [weak self] in self?.notch?.expanded = false },
+                               onAnswer: { [weak self] r, d in self?.bridge.answer(r, d) })
     let alerts = Alerts()
+    let bridge = Bridge()
+    var sessions: [Session] = []
 
     func applicationDidFinishLaunching(_ n: Notification) {
         refresh()
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
         // Sessions are local files, so they can be read far more often than the usage API.
         pollSessions()
-        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.pollSessions() }
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.pollSessions() }
         notch?.place()
+        bridge.onChange = { [weak self] in self?.requestsChanged() }
+        bridge.start()
         guard useTouchBar else { return }
 
         stripButton.target = self; stripButton.action = #selector(show)
@@ -123,9 +132,24 @@ final class App: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
     }
 
     func pollSessions() {
-        let sessions = claudeSessions()
-        notch?.update(waiting: sessions.filter(\.waiting).count)
+        sessions = claudeSessions()
+        notch?.update(sessions: sessions, asking: bridge.pending.count)
         details.update(sessions: sessions)
+    }
+
+    // A new prompt opens the details on it, with a sound; answering the last one puts them away.
+    private var shownRequests = 0
+    func requestsChanged() {
+        let count = bridge.pending.count
+        notch?.update(sessions: sessions, asking: count)
+        details.update(requests: bridge.pending)
+        if count > shownRequests {
+            NSSound(named: "Tink")?.play()
+            if !details.isShown { toggleDetails() }
+        } else if count == 0, details.isShown {
+            toggleDetails()
+        }
+        shownRequests = count
     }
 
     // Grows out of the notch when there is one showing; otherwise hangs from the menu bar.

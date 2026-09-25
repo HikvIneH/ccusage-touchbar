@@ -6,6 +6,8 @@ import AppKit
 final class TopPanel: NSPanel {
     // AppKit would otherwise push the window down out of the menu bar.
     override func constrainFrameRect(_ r: NSRect, to s: NSScreen?) -> NSRect { r }
+    // Borderless panels refuse keyboard focus by default; the answer fields need it on click.
+    override var canBecomeKey: Bool { true }
 }
 
 final class Notch: NSView {
@@ -17,8 +19,10 @@ final class Notch: NSView {
     private let always: Bool
     private let onClick: () -> Void
     private var hovering = false
+    private let spark = NSTextField(labelWithString: "✳︎")
     private var usage: Usage?
-    private var waiting = 0
+    private var sessions: [Session] = []
+    private var asking = 0
     private let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
     // While the details hang below, the ears are their top edge: square bottom, no hover line.
     var expanded = false { didSet { place() } }
@@ -31,7 +35,9 @@ final class Notch: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.cornerRadius = 10
-        [left, right, full].forEach(addSubview)
+        [spark, left, right, full].forEach(addSubview)
+        spark.font = .systemFont(ofSize: 13, weight: .bold)
+        spark.wantsLayer = true
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self))
         panel.contentView = self
@@ -48,31 +54,55 @@ final class Notch: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func update(usage: Usage) { self.usage = usage; render() }
-    // Sessions waiting on a permission prompt or a question, counted in the right ear.
-    func update(waiting: Int) { if waiting != self.waiting { self.waiting = waiting; render() } }
+    func update(sessions: [Session], asking: Int) { self.sessions = sessions; self.asking = asking; render() }
 
-    // The session limit goes left of the notch, the rest right, each in its level's colour.
+    // Left of the notch: the session that most needs a look (waiting, else the latest working
+    // one) with how long it has been at it, or the 5-hour limit when nothing is running.
+    // Right: the limits, each in its level's colour, and how many sessions wait on you.
     private func render() {
         let line = usage?.line ?? []
         let stale = usage?.stale ?? false
-        let l = NSMutableAttributedString(string: "✳︎ ", attributes: [
-            .foregroundColor: NSColor.claude, .font: NSFont.systemFont(ofSize: 13, weight: .bold)])
-        l.append(colored(line.prefix(1).map { ($0.short, $0.level) }, sep: "", stale: false, font: font))
-        if line.isEmpty { l.append(NSAttributedString(string: usage == nil ? "…" : "?", attributes: [.foregroundColor: NSColor.white, .font: font])) }
+        let focus = sessions.first { $0.waiting } ?? sessions.first { $0.busy }
+        let waiting = max(asking, sessions.filter(\.waiting).count)
+        let l = NSMutableAttributedString()
+        if let s = focus {
+            let name = s.name.count > 18 ? s.name.prefix(17) + "…" : s.name
+            l.append(NSAttributedString(string: name, attributes: [.foregroundColor: NSColor.white, .font: font]))
+            l.append(NSAttributedString(string: " \(s.waiting ? "waiting" : s.elapsed)", attributes: [
+                .foregroundColor: s.waiting ? NSColor.systemOrange : .dim, .font: font]))
+        } else {
+            l.append(colored(line.prefix(1).map { ($0.short, $0.level) }, sep: "", stale: false, font: font))
+            if line.isEmpty { l.append(NSAttributedString(string: usage == nil ? "…" : "?", attributes: [.foregroundColor: NSColor.white, .font: font])) }
+        }
         left.attributedStringValue = l
         let r = NSMutableAttributedString(attributedString:
-            colored(line.dropFirst().map { ($0.short, $0.level) }, sep: " · ", stale: stale, font: font))
+            colored((focus == nil ? line.dropFirst() : line[...]).map { ($0.short, $0.level) }, sep: " · ", stale: stale, font: font))
         if waiting > 0 {
             r.append(NSAttributedString(string: "  ● \(waiting)", attributes: [.foregroundColor: NSColor.systemOrange, .font: font]))
         }
         right.attributedStringValue = r
+        spark.textColor = focus?.waiting == true || asking > 0 ? .systemOrange : .claude
+        pulse(focus?.busy == true && asking == 0)
         full.attributedStringValue = usage.map { u in
             u.rows.isEmpty ? NSAttributedString(string: "Limits unavailable — retrying in a few minutes",
                                                 attributes: [.foregroundColor: NSColor.white, .font: font])
                 : colored(u.line.map { ($0.long, $0.level) }, sep: "  │  ", stale: u.stale, font: font)
         } ?? NSAttributedString(string: "loading…", attributes: [.foregroundColor: NSColor.white, .font: font])
-        [left, right, full].forEach { $0.sizeToFit() }
+        [spark, left, right, full].forEach { $0.sizeToFit() }
         place()
+    }
+
+    // The spark breathes while Claude is working.
+    private func pulse(_ on: Bool) {
+        guard let layer = spark.layer, on != (layer.animation(forKey: "pulse") != nil) else { return }
+        guard on else { layer.removeAnimation(forKey: "pulse"); return }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 1
+        a.toValue = 0.25
+        a.duration = 0.9
+        a.autoreverses = true
+        a.repeatCount = .infinity
+        layer.add(a, forKey: "pulse")
     }
 
     @objc func place() {
@@ -87,7 +117,8 @@ final class Notch: NSView {
         }
         let pad: CGFloat = 10, drop: CGFloat = 26, cx = screen.frame.midX
         let dropping = hovering && !expanded
-        var minX = cx - notchW / 2 - left.frame.width - 2 * pad
+        let sparkW = spark.frame.width + 3
+        var minX = cx - notchW / 2 - sparkW - left.frame.width - 2 * pad
         var maxX = cx + notchW / 2 + right.frame.width + 2 * pad
         var h = notchH
         if dropping {
@@ -98,6 +129,7 @@ final class Notch: NSView {
         layer?.maskedCorners = expanded ? [] : [.layerMinXMinYCorner, .layerMaxXMinYCorner] // the bottom two
         let earY = h - notchH + (notchH - left.frame.height) / 2
         left.setFrameOrigin(NSPoint(x: cx - notchW / 2 - pad - left.frame.width - minX, y: earY))
+        spark.setFrameOrigin(NSPoint(x: left.frame.minX - sparkW, y: earY + (left.frame.height - spark.frame.height) / 2))
         right.setFrameOrigin(NSPoint(x: cx + notchW / 2 + pad - minX, y: earY))
         full.setFrameOrigin(NSPoint(x: cx - full.frame.width / 2 - minX, y: (drop - full.frame.height) / 2 + 2))
         full.isHidden = !dropping
